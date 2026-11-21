@@ -73,11 +73,19 @@ body.hud-hidden .hud-root {
   visibility: hidden;
 }
 
-/* Top-left location & atmosphere readout */
-.hud-status {
+/* Top-left location, atmosphere & alert readout */
+.hud-top-left {
   position: absolute;
   top: 16px;
   left: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.hud-status {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -90,6 +98,33 @@ body.hud-hidden .hud-root {
   line-height: 1.2;
   color: var(--text-primary);
   pointer-events: auto;
+}
+
+.hud-char-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #fde68a;
+  letter-spacing: 0.04em;
+}
+
+.hud-alert {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(24, 14, 10, 0.9);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #fca5a5;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  transition: opacity 180ms ease;
+}
+
+.hud-alert.is-hidden {
+  opacity: 0;
+  display: none;
 }
 
 .hud-zone {
@@ -347,23 +382,102 @@ body.hud-hidden .hud-root {
   color: var(--text-primary);
 }
 
-.zone-btn:last-child {
-  grid-column: 1 / -1;
+.zone-btn-backrooms {
+  border-color: rgba(234, 179, 8, 0.35);
+  color: #fde68a;
+}
+
+.zone-btn-backrooms.is-active {
+  background: rgba(234, 179, 8, 0.18);
+  border-color: rgba(234, 179, 8, 0.65);
+  color: #fef08a;
+}
+
+/* Collapsible Online Co-op Drawer */
+.coop-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 244px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-hairline);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.58);
+  pointer-events: auto;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 25;
+}
+
+.coop-panel.is-open {
+  display: flex;
+}
+
+.coop-panel.is-open ~ .minimap-panel.is-open {
+  right: 270px;
+}
+
+.coop-row {
+  display: flex;
+  gap: 6px;
+}
+
+.coop-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-hairline);
+  background: #080b10;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  outline: none;
+}
+
+.coop-input:focus {
+  border-color: var(--border-active);
+}
+
+.coop-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.coop-roster {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface-well);
+  border: 1px solid rgba(226, 232, 240, 0.08);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 760px) {
   .controls-hint {
     display: none;
   }
-  .hud-status {
+  .hud-top-left {
     top: 10px;
     left: 10px;
+  }
+  .hud-status {
     padding: 6px 10px;
     font-size: 11.5px;
   }
-  .minimap-panel {
+  .minimap-panel,
+  .coop-panel {
     top: 50px;
     right: 10px;
+  }
+  .coop-panel.is-open ~ .minimap-panel.is-open {
+    right: 10px;
+    top: 210px;
   }
   .hud-dock {
     bottom: 10px;
@@ -379,8 +493,8 @@ body.hud-hidden .hud-root {
 }
 
 /* Low-opacity controls so the horror scene stays in front */
-.hud-dock, .controls-hint, .hud-status { opacity: 0.32; transition: opacity 200ms ease; }
-.hud-dock:hover, .hud-dock:focus-within, .hud-status:hover { opacity: 0.9; }
+.hud-dock, .controls-hint, .hud-status { opacity: 0.36; transition: opacity 200ms ease; }
+.hud-dock:hover, .hud-dock:focus-within, .hud-status:hover { opacity: 0.92; }
 .joystick {
   position: fixed; left: 28px; bottom: 96px; width: 132px; height: 132px;
   border-radius: 50%; border: 1.5px solid rgba(226, 232, 240, 0.35);

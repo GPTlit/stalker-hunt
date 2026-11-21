@@ -209,18 +209,40 @@
 
     <div id="hud-root" class="hud-root">
       <!-- Top-Left Minimal Location & Atmosphere Chip -->
-      <div class="hud-status" id="hud-status" aria-label="Current location and lighting">
-        <span class="hud-zone" id="hud-zone">South Canopy Forecourt</span>
-        <span class="hud-sep" aria-hidden="true">·</span>
-        <span class="hud-coords tabular-nums" id="hud-coords">0, 118</span>
-        <span class="hud-sep" aria-hidden="true">·</span>
-        <span class="hud-atmo" id="hud-atmo">Night</span>
+      <div class="hud-top-left">
+        <div class="hud-status" id="hud-status" aria-label="Current location and lighting">
+          <span class="hud-zone" id="hud-zone">South Canopy Forecourt</span>
+          <span class="hud-sep" aria-hidden="true">·</span>
+          <span class="hud-coords tabular-nums" id="hud-coords">0, 118</span>
+          <span class="hud-sep" aria-hidden="true">·</span>
+          <span class="hud-atmo" id="hud-atmo">Night</span>
+          <span class="hud-sep" aria-hidden="true">·</span>
+          <span class="hud-char-badge" id="hud-char-badge">CR7</span>
+        </div>
+        <div class="hud-alert is-hidden" id="hud-alert" role="status" aria-live="polite"></div>
       </div>
+
+      <!-- Top-Right Collapsible Co-op Drawer -->
+      <aside class="coop-panel" id="coop-panel" aria-label="Online Co-op">
+        <div class="minimap-header">
+          <span class="minimap-title">Online Co-op</span>
+          <button type="button" class="minimap-close" id="btn-close-coop" title="Close Co-op (O)" aria-label="Close Co-op">×</button>
+        </div>
+        <div class="coop-row">
+          <input type="text" id="coop-room-input" class="coop-input" maxlength="16" placeholder="ROOM CODE" value="CAMPUS" aria-label="Room code">
+          <button type="button" class="zone-btn is-active" id="btn-coop-join">Join</button>
+        </div>
+        <div class="coop-actions">
+          <button type="button" class="zone-btn" id="btn-coop-copy">Copy Invite Link</button>
+          <button type="button" class="zone-btn" id="btn-coop-swap">Swap CR7 / Messi</button>
+        </div>
+        <div class="coop-roster" id="coop-roster">Offline · Solo Hunt (CR7)</div>
+      </aside>
 
       <!-- Top-Right Collapsible Minimap Drawer -->
       <aside class="minimap-panel" id="minimap-panel" aria-label="Campus Minimap">
         <div class="minimap-header">
-          <span class="minimap-title">Campus Survey Map</span>
+          <span class="minimap-title">Territory Survey</span>
           <button type="button" class="minimap-close" id="btn-close-map" title="Close Map (M)" aria-label="Close Map">×</button>
         </div>
         <div class="minimap-canvas-wrap">
@@ -232,6 +254,7 @@
           <button type="button" class="zone-btn" data-zone="courtyard">Courtyard</button>
           <button type="button" class="zone-btn" data-zone="waterfront">Waterfront</button>
           <button type="button" class="zone-btn" data-zone="shoreline">Shoreline</button>
+          <button type="button" class="zone-btn zone-btn-backrooms" data-zone="backrooms">Backrooms</button>
         </div>
       </aside>
 
@@ -240,7 +263,7 @@
 
       <!-- Unobtrusive Controls Hint Above Dock -->
       <div class="controls-hint" id="controls-hint">
-        Joystick or <kbd>WASD</kbd> to walk · drag screen or mouse to look · <kbd>Shift</kbd> Sprint · <kbd>F</kbd> Flashlight · <kbd>Tab</kbd> Orbit · <kbd>M</kbd> Map
+        <kbd>WASD</kbd> Walk · <kbd>Shift</kbd> Sprint · <kbd>Space</kbd> Jump · <kbd>Q</kbd> / Right-Click Aim Torch · <kbd>F</kbd> Light · <kbd>O</kbd> Co-op · <kbd>M</kbd> Map
       </div>
 
       <div class="joystick" id="joystick" aria-label="Movement joystick">
@@ -250,7 +273,7 @@
       <!-- Bottom-Center Unified Explorer Dock -->
       <nav class="hud-dock" id="hud-dock" aria-label="Map explorer controls">
         <div class="dock-group" role="group" aria-label="Camera mode">
-          <button type="button" class="dock-btn is-active" id="btn-cam-walk" data-cam-mode="walk" title="First-person walk (Tab)">Walk</button>
+          <button type="button" class="dock-btn is-active" id="btn-cam-walk" data-cam-mode="walk" title="Third-person walk (Tab)">Walk</button>
           <button type="button" class="dock-btn" id="btn-cam-orbit" data-cam-mode="orbit" title="Free orbit camera (Tab)">Orbit</button>
         </div>
         <div class="dock-divider" aria-hidden="true"></div>
@@ -260,8 +283,15 @@
           <button type="button" class="dock-btn" id="btn-atmo-day" data-atmo="day" title="Daylight atmosphere (3)">Day</button>
         </div>
         <div class="dock-divider" aria-hidden="true"></div>
-        <div class="dock-group" role="group" aria-label="Map utilities">
+        <div class="dock-group" role="group" aria-label="Player & Torch">
+          <button type="button" class="dock-btn is-active" id="btn-char-ronaldo" data-character="ronaldo" title="Play as Cristiano Ronaldo">CR7</button>
+          <button type="button" class="dock-btn" id="btn-char-messi" data-character="messi" title="Play as Lionel Messi">Messi</button>
           <button type="button" class="dock-btn is-active" id="btn-flashlight" title="Toggle Flashlight (F)">Light <kbd>F</kbd></button>
+          <button type="button" class="dock-btn" id="btn-aim" title="Point / Aim Flashlight (Q or Right-Click)">Aim <kbd>Q</kbd></button>
+        </div>
+        <div class="dock-divider" aria-hidden="true"></div>
+        <div class="dock-group" role="group" aria-label="Map utilities">
+          <button type="button" class="dock-btn" id="btn-coop" title="Online Co-op Room (O)">Co-op</button>
           <button type="button" class="dock-btn" id="btn-map" title="Toggle Minimap (M)">Map <kbd>M</kbd></button>
           <button type="button" class="dock-btn" id="btn-reset" title="Reset Spawn (R)">Reset <kbd>R</kbd></button>
           <button type="button" class="dock-btn" id="btn-hide-hud" title="Hide HUD (H)">Hide <kbd>H</kbd></button>

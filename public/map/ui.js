@@ -1,5 +1,5 @@
 /**
- * ui.js — Minimal HUD & Interactive HiDPI 2D Survey Minimap for Mountain View Campus Map.
+ * ui.js — Minimal HUD, Co-op Panel & Interactive HiDPI 2D Survey Minimap for Stalker Hunt.
  */
 
 import {
@@ -15,6 +15,8 @@ import {
   state,
   dispatchAction,
 } from "./contract.js";
+import { BACKROOMS_NOCLIP_ANOMALIES } from "./scenes/backrooms_expansion.js";
+import { getRoomInviteUrl } from "./game/multiplayer.js";
 
 const MINIMAP_CSS_SIZE = 220;
 const MIN_MAP_REDRAW_MS = 40;
@@ -50,6 +52,8 @@ export class CampusMapUI {
     this.hudZone = document.getElementById("hud-zone");
     this.hudCoords = document.getElementById("hud-coords");
     this.hudAtmo = document.getElementById("hud-atmo");
+    this.hudCharBadge = document.getElementById("hud-char-badge");
+    this.hudAlert = document.getElementById("hud-alert");
     this.walkReticle = document.getElementById("walk-reticle");
     this.controlsHint = document.getElementById("controls-hint");
 
@@ -57,11 +61,22 @@ export class CampusMapUI {
     this.minimapCanvas = document.getElementById("minimap-canvas");
     this.minimapCtx = this.minimapCanvas ? this.minimapCanvas.getContext("2d") : null;
 
+    this.coopPanel = document.getElementById("coop-panel");
+    this.coopRoomInput = document.getElementById("coop-room-input");
+    this.coopRoster = document.getElementById("coop-roster");
+
     this.camButtons = Array.from(document.querySelectorAll("[data-cam-mode]"));
     this.atmoButtons = Array.from(document.querySelectorAll("[data-atmo]"));
     this.zoneButtons = Array.from(document.querySelectorAll("[data-zone]"));
+    this.charButtons = Array.from(document.querySelectorAll("[data-character]"));
 
     this.btnFlashlight = document.getElementById("btn-flashlight");
+    this.btnAim = document.getElementById("btn-aim");
+    this.btnCoop = document.getElementById("btn-coop");
+    this.btnCloseCoop = document.getElementById("btn-close-coop");
+    this.btnCoopJoin = document.getElementById("btn-coop-join");
+    this.btnCoopCopy = document.getElementById("btn-coop-copy");
+    this.btnCoopSwap = document.getElementById("btn-coop-swap");
     this.btnMap = document.getElementById("btn-map");
     this.btnCloseMap = document.getElementById("btn-close-map");
     this.btnReset = document.getElementById("btn-reset");
@@ -70,6 +85,7 @@ export class CampusMapUI {
     this._lastCoordsText = "";
     this._lastZoneId = "";
     this._lastAtmoId = "";
+    this._lastAlertText = "";
     this._lastMapDrawMs = -1000;
 
     this._bindInteractions();
@@ -95,9 +111,80 @@ export class CampusMapUI {
       });
     }
 
+    for (const btn of this.charButtons) {
+      btn.addEventListener("click", () => {
+        dispatchAction(DEMO_ACTIONS.SET_CHARACTER, btn.getAttribute("data-character"));
+      });
+    }
+
     if (this.btnFlashlight) {
       this.btnFlashlight.addEventListener("click", () => {
         dispatchAction(DEMO_ACTIONS.TOGGLE_FLASHLIGHT);
+      });
+    }
+
+    if (this.btnAim) {
+      this.btnAim.addEventListener("click", () => {
+        dispatchAction(DEMO_ACTIONS.TOGGLE_AIM);
+      });
+    }
+
+    if (this.btnCoop) {
+      this.btnCoop.addEventListener("click", () => {
+        dispatchAction(DEMO_ACTIONS.TOGGLE_COOP);
+      });
+    }
+
+    if (this.btnCloseCoop) {
+      this.btnCloseCoop.addEventListener("click", () => {
+        dispatchAction(DEMO_ACTIONS.TOGGLE_COOP, false);
+      });
+    }
+
+    if (this.btnCoopJoin) {
+      this.btnCoopJoin.addEventListener("click", () => {
+        const app = window.__campusApp;
+        if (!app) return;
+        const typedRoom = (this.coopRoomInput?.value || "CAMPUS")
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9_-]/g, "")
+          .slice(0, 16) || "CAMPUS";
+        if (this.coopRoomInput) this.coopRoomInput.value = typedRoom;
+        if (state.coopConnected && state.roomId === typedRoom) {
+          app.leaveCoopRoom();
+        } else {
+          app.joinCoopRoom(typedRoom, state.localCharacter);
+        }
+      });
+    }
+
+    if (this.btnCoopCopy) {
+      this.btnCoopCopy.addEventListener("click", async () => {
+        const room =
+          state.roomId ||
+          (this.coopRoomInput?.value || "CAMPUS").trim().toUpperCase() ||
+          "CAMPUS";
+        const url = getRoomInviteUrl(room);
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(url);
+          }
+          const orig = this.btnCoopCopy.textContent;
+          this.btnCoopCopy.textContent = "Copied!";
+          setTimeout(() => {
+            if (this.btnCoopCopy) this.btnCoopCopy.textContent = orig;
+          }, 1600);
+        } catch {
+          // Ignore clipboard permission errors
+        }
+      });
+    }
+
+    if (this.btnCoopSwap) {
+      this.btnCoopSwap.addEventListener("click", () => {
+        const next = state.localCharacter === "ronaldo" ? "messi" : "ronaldo";
+        dispatchAction(DEMO_ACTIONS.SET_CHARACTER, next);
       });
     }
 
@@ -160,12 +247,58 @@ export class CampusMapUI {
       }
     }
 
+    if (this.hudCharBadge) {
+      this.hudCharBadge.textContent = state.localCharacter === "messi" ? "MESSI" : "CR7";
+    }
+    for (const btn of this.charButtons) {
+      btn.classList.toggle("is-active", btn.getAttribute("data-character") === state.localCharacter);
+    }
+
     for (const btn of this.camButtons) {
       btn.classList.toggle("is-active", btn.getAttribute("data-cam-mode") === state.cameraMode);
     }
 
     if (this.btnFlashlight) {
       this.btnFlashlight.classList.toggle("is-active", Boolean(state.flashlightOn));
+    }
+    if (this.btnAim) {
+      this.btnAim.classList.toggle("is-active", Boolean(state.aiming));
+    }
+    if (this.btnCoop) {
+      this.btnCoop.classList.toggle("is-active", Boolean(state.coopOpen || state.coopConnected));
+      const count = Array.isArray(state.coopPlayers) ? state.coopPlayers.length : 0;
+      this.btnCoop.textContent = state.coopConnected ? `Co-op (${count})` : "Co-op";
+    }
+    if (this.coopPanel) {
+      this.coopPanel.classList.toggle("is-open", Boolean(state.coopOpen));
+    }
+    if (this.coopRoomInput && state.roomId && document.activeElement !== this.coopRoomInput) {
+      this.coopRoomInput.value = state.roomId;
+    }
+    if (this.btnCoopJoin) {
+      this.btnCoopJoin.textContent = state.coopConnected ? "Leave" : "Join";
+    }
+    if (this.coopRoster) {
+      if (state.coopConnected && Array.isArray(state.coopPlayers)) {
+        const lines = state.coopPlayers.map((p) => {
+          const role = p.character === "messi" ? "Lionel Messi" : "Cristiano Ronaldo";
+          const tag = p.isHost ? " · Host" : "";
+          return `${role}${tag}`;
+        });
+        this.coopRoster.textContent = `Room ${state.roomId}: ${lines.join(" & ") || "Connected"}`;
+      } else {
+        const you = state.localCharacter === "messi" ? "Messi" : "CR7";
+        this.coopRoster.textContent = `Offline · Solo Hunt (${you})`;
+      }
+    }
+
+    if (this.hudAlert) {
+      const msg = String(state.stalkerAlert || "");
+      if (msg !== this._lastAlertText) {
+        this._lastAlertText = msg;
+        this.hudAlert.textContent = msg;
+        this.hudAlert.classList.toggle("is-hidden", !msg);
+      }
     }
 
     if (this.btnMap) {
@@ -234,7 +367,7 @@ export class CampusMapUI {
     ctx.fillStyle = "#080b10";
     ctx.fillRect(0, 0, MINIMAP_CSS_SIZE, MINIMAP_CSS_SIZE);
 
-    // 2. Water bodies (SF Bay northern basin, Retention Pond, Stevens Creek)
+    // 2. Water bodies
     ctx.fillStyle = "#102033";
     const pondTL = worldToMinimap(166, -60, MINIMAP_CSS_SIZE);
     const pondBR = worldToMinimap(235, 92, MINIMAP_CSS_SIZE);
@@ -279,13 +412,10 @@ export class CampusMapUI {
       const cx = b.id === "bldg_north_commons" ? -32 : (b.cx ?? 0);
       const cz = b.cz ?? 0;
       const p = worldToMinimap(cx - b.wx * 0.5, cz - b.wz * 0.5, MINIMAP_CSS_SIZE);
-      const bw = b.wx * scale;
-      const bh = b.wz * scale;
-      ctx.fillRect(p.x, p.y, bw, bh);
-      ctx.strokeRect(p.x, p.y, bw, bh);
+      ctx.fillRect(p.x, p.y, b.wx * scale, b.wz * scale);
+      ctx.strokeRect(p.x, p.y, b.wx * scale, b.wz * scale);
     }
 
-    // Gradient Canopy & Shoreline amphitheatre silhouettes
     const canopyTL = worldToMinimap(-19, 129, MINIMAP_CSS_SIZE);
     ctx.fillRect(canopyTL.x, canopyTL.y, 38 * scale, 29 * scale);
     ctx.strokeRect(canopyTL.x, canopyTL.y, 38 * scale, 29 * scale);
@@ -296,15 +426,61 @@ export class CampusMapUI {
     ctx.fill();
     ctx.stroke();
 
+    // 4B. Backrooms Level 0 Wings + Entrance Vestibule
+    ctx.fillStyle = "#3b3216";
+    ctx.strokeStyle = "rgba(234, 179, 8, 0.45)";
+    const brWings = [
+      [48 - 16.5, 146 - 16.5, 33, 33],
+      [48 - 16.5, 176.5 - 16.5, 33, 33],
+      [78.7 - 16.5, 146 - 16.5, 33, 33],
+      [48.5, 123, 5, 8],
+    ];
+    for (const [wx, wz, ww, wh] of brWings) {
+      const p = worldToMinimap(wx, wz, MINIMAP_CSS_SIZE);
+      ctx.fillRect(p.x, p.y, ww * scale, wh * scale);
+      ctx.strokeRect(p.x, p.y, ww * scale, wh * scale);
+    }
+
+    // No-Clip anomaly breach markers
+    ctx.fillStyle = "#facc15";
+    for (const a of BACKROOMS_NOCLIP_ANOMALIES) {
+      const ap = worldToMinimap(a.x, a.z, MINIMAP_CSS_SIZE);
+      ctx.fillRect(ap.x - 1.5, ap.y - 1.5, 3, 3);
+    }
+
     // 5. Zone markers
     for (let i = 0; i < MAP_ZONES.length; i++) {
       const z = MAP_ZONES[i];
       const zp = worldToMinimap(z.x, z.z, MINIMAP_CSS_SIZE);
       const isActive = z.id === state.activeZone;
-      ctx.fillStyle = isActive ? "#7DD3FC" : "rgba(148, 163, 184, 0.55)";
+      ctx.fillStyle = isActive
+        ? z.id === "backrooms" ? "#fde047" : "#7DD3FC"
+        : "rgba(148, 163, 184, 0.55)";
       ctx.beginPath();
       ctx.arc(zp.x, zp.y, isActive ? 3.2 : 2.1, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // 5B. Active visible Stalkers (crimson dots)
+    const stalkerBlips = window.__campusApp?.characters?.stalkerPack?.getActivePositions?.() || [];
+    ctx.fillStyle = "#ef4444";
+    for (let i = 0; i < stalkerBlips.length; i++) {
+      const sp = worldToMinimap(stalkerBlips[i].x, stalkerBlips[i].z, MINIMAP_CSS_SIZE);
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, 2.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 5C. Online Co-op Friend marker
+    const remotePlayers = window.__campusApp?.characters?.remotePlayers;
+    if (remotePlayers) {
+      ctx.fillStyle = "#34d399";
+      for (const rec of remotePlayers.values()) {
+        const fp = worldToMinimap(rec.x, rec.z, MINIMAP_CSS_SIZE);
+        ctx.beginPath();
+        ctx.arc(fp.x, fp.y, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // 6. Player position + FOV cone

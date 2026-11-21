@@ -1,7 +1,7 @@
 /**
- * core.js — Mountain View 3D Campus Horror Map Explorer.
- * Preserves only the 3D campus map, lighting atmospheres (Night/Dusk/Day),
- * camera-mounted flashlight, first-person walk + orbit modes, and 6 map GLBs.
+ * core.js — Stalker Hunt 3D Map Core:
+ * Mountain View Campus + Backrooms Level 0 expansion, Ronaldo & Messi rigged characters,
+ * right-hand 3D horror flashlight pointing/aiming, 5-Stalker pack AI, and WebSocket co-op.
  */
 
 import * as THREE from "./vendor/three.module.js";
@@ -26,6 +26,11 @@ import {
   deplasticizeCampusPropMaterials,
 } from "./scenes/materials.js";
 import { OpenCampusWorld } from "./scenes/open_campus_world.js";
+import {
+  BackroomsExpansion,
+  BACKROOMS_CEILING_Y,
+  BACKROOMS_WARP_ARRIVAL,
+} from "./scenes/backrooms_expansion.js";
 import { decodeCampusLandmarksV2Glb } from "./assets/glb/campus_landmarks_v2_glb.js";
 import { decodeCampusEnvironmentV3Glb } from "./assets/glb/campus_environment_v3_glb.js";
 import { decodeTreesV4Glb } from "./assets/glb/trees_v4_glb.js";
@@ -37,18 +42,29 @@ import {
   applyWorldCohesionShaderHook,
 } from "./scenes/v5_postfx_lighting.js";
 import { loadCharacters } from "./game/characters.js";
+import { MultiplayerClient } from "./game/multiplayer.js";
 
 const EYE_HEIGHT_M = 1.70;
 const WALK_SPEED_MPS = 4.6;
 const SPRINT_SPEED_MPS = 8.6;
 const PLAYER_RADIUS_M = 0.45;
-const MAX_PITCH_RAD = (78 * Math.PI) / 180;
 const MOUSE_SENSITIVITY = 0.0022;
 const TOUCH_LOOK_SENSITIVITY = 0.0048;
-const CAM_DISTANCE_M = 4.6;
-const CAM_TARGET_HEIGHT_M = 1.55;
-const CAM_MIN_PITCH = -0.55;
-const CAM_MAX_PITCH = 1.05;
+const CAM_TARGET_HEIGHT_M = 1.46;
+const CAM_MIN_PITCH = -0.62;
+const CAM_MAX_PITCH = 1.02;
+const GRAVITY_MPS2 = -19.5;
+const JUMP_IMPULSE_MPS = 6.3;
+
+const _backroomsFogColor = new THREE.Color("#29230f");
+const _backroomsSkyColor = new THREE.Color("#141108");
+const _presetFogColor = new THREE.Color();
+const _presetSkyColor = new THREE.Color();
+const _camFwdScratch = new THREE.Vector3();
+const _camRightScratch = new THREE.Vector3();
+const _aimTargetScratch = new THREE.Vector3();
+const _aimDirScratch = new THREE.Vector3();
+const _handApproxScratch = new THREE.Vector3();
 
 function detectSoftwareWebGLRenderer() {
   try {
@@ -162,14 +178,21 @@ export class CampusMapApp {
     this.playerZ = state.playerPos.z;
     this.playerYaw = state.playerYaw;
     this.playerPitch = state.playerPitch;
+    this._posY = 0; // vertical offset above ground
+    this._velY = 0;
+    this._grounded = true;
     this._velX = 0;
     this._velZ = 0;
-    this._bobPhase = 0;
+    this._sprinting = false;
     this._elapsedSec = 0;
     this._lastZoneCheckSec = -10;
     this._isDraggingLook = false;
     this._lastDragX = 0;
     this._lastDragY = 0;
+    this._backroomsBlend = 0;
+    this._camDistCurrent = 3.85;
+    this._camRightCurrent = 0.42;
+    this._alertClearTimer = 0;
 
     this.input = {
       forward: false,
@@ -180,8 +203,10 @@ export class CampusMapApp {
     };
     this.analog = { x: 0, y: 0 };
     this._lookPointerId = null;
-    this.hero = null;
-    this.watcher = null;
+
+    this.characters = null;
+    this.backrooms = new BackroomsExpansion();
+    this._initMultiplayer();
 
     // Zero-GC reusable scratch records
     this._worldSnap = {
@@ -208,7 +233,6 @@ export class CampusMapApp {
     this._initWorld();
     this._bindBusAndPointerControls();
 
-    // Sync initial frame 0 camera and world state immediately
     this._syncWalkCamera(0);
     this._updateWorldAndLighting(0, true);
 
@@ -220,6 +244,72 @@ export class CampusMapApp {
       console.warn("[CampusMap] Asset load completed with warnings:", err);
       return false;
     });
+  }
+
+  _initMultiplayer() {
+    const syncRosterToState = (info) => {
+      state.coopConnected = Boolean(info.connected);
+      state.roomId = info.roomId || state.roomId;
+      state.coopIsHost = Boolean(info.isHost);
+      state.coopPlayers = Array.isArray(info.players) ? info.players : [];
+      if (info.character && (info.character === "ronaldo" || info.character === "messi")) {
+        state.localCharacter = info.character;
+        if (this.characters) {
+          this.characters.setLocalCharacter(info.character);
+        }
+      }
+      if (this.characters) {
+        this.characters.syncRemoteRoster(state.coopPlayers, info.playerId);
+      }
+      bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: "COOP_ROSTER", state });
+    };
+
+    this.multiplayer = new MultiplayerClient({
+      onWelcome: (info) => {
+        syncRosterToState(info);
+        this._setAlert(
+          `JOINED ROOM ${info.roomId} AS ${info.character === "messi" ? "MESSI" : "RONALDO"}`,
+          3.5
+        );
+      },
+      onRosterChange: (info) => {
+        syncRosterToState(info);
+      },
+      onRemotePlayerState: (playerId, character, st) => {
+        if (this.characters) {
+          this.characters.applyRemoteState(playerId, character, st);
+        }
+        const entry = state.coopPlayers.find((p) => p.id === playerId);
+        if (entry) entry.state = st;
+      },
+    });
+  }
+
+  joinCoopRoom(roomId, preferredChar = state.localCharacter) {
+    state.roomId = String(roomId || "CAMPUS")
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9_-]/g, "")
+      .slice(0, 16) || "CAMPUS";
+    this.multiplayer.join(state.roomId, preferredChar);
+    bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: "COOP_JOINING", state });
+  }
+
+  leaveCoopRoom() {
+    this.multiplayer.leave();
+    if (this.characters) {
+      this.characters.syncRemoteRoster([], null);
+    }
+    state.coopConnected = false;
+    state.coopIsHost = true;
+    state.coopPlayers = [];
+    bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: "COOP_LEFT", state });
+  }
+
+  _setAlert(msg, durationSec = 3.5) {
+    state.stalkerAlert = msg;
+    this._alertClearTimer = durationSec;
+    bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: "ALERT", state });
   }
 
   _reportPreload(pct, stage) {
@@ -287,8 +377,9 @@ export class CampusMapApp {
       this._activePreset.fogDensity
     );
 
-    this.camera = new THREE.PerspectiveCamera(62, w / h, 0.15, 1300);
+    this.camera = new THREE.PerspectiveCamera(62, w / h, 0.14, 1300);
     this.camera.rotation.order = "YXZ";
+    this.scene.add(this.camera);
 
     // Primary Moon / Sun directional shadow caster
     this.dirLight = new THREE.DirectionalLight(
@@ -309,26 +400,21 @@ export class CampusMapApp {
     );
     this.scene.add(this.hemiLight);
 
-    // Camera-attached horror exploration flashlight (SpotLight + close bounce PointLight)
+    // Real scene SpotLight + close bounce PointLight synced to character's 3D held horror flashlight
     this.flashlight = new THREE.SpotLight(
       "#fff1d6",
-      4.2,
-      62,
+      4.8,
+      68,
       Math.PI * 0.19,
       0.52,
-      1.35
+      1.32
     );
-    this.flashlight.position.set(0.14, -0.10, -0.05);
-    this.flashlight.target.position.set(0.0, -0.12, -16.0);
     this.flashlight.castShadow = false;
-    this.camera.add(this.flashlight);
-    this.camera.add(this.flashlight.target);
+    this.scene.add(this.flashlight);
+    this.scene.add(this.flashlight.target);
 
-    this.flashlightFill = new THREE.PointLight("#ffe8c2", 0.42, 10.5, 1.6);
-    this.flashlightFill.position.set(0.0, 0.0, -0.45);
-    this.camera.add(this.flashlightFill);
-
-    this.scene.add(this.camera);
+    this.flashlightFill = new THREE.PointLight("#ffe8c2", 0.52, 11.5, 1.55);
+    this.scene.add(this.flashlightFill);
 
     // OrbitControls (inactive during Walk mode, toggled via Tab or HUD)
     this.orbitControls = new OrbitControls(this.camera, this.canvas);
@@ -374,7 +460,6 @@ export class CampusMapApp {
   }
 
   _bindBusAndPointerControls() {
-    // dispatchAction() emits STATE_CHANGED with the action name, so listen there.
     bus.on(DEMO_EVENTS.STATE_CHANGED, (evt) => {
       const action = evt && evt.action;
       if (action === DEMO_ACTIONS.SET_CAMERA_MODE) {
@@ -384,6 +469,12 @@ export class CampusMapApp {
       } else if (action === DEMO_ACTIONS.SET_ATMOSPHERE) {
         this.applyAtmosphere(state.atmosphere);
         this.setFlashlight(state.flashlightOn);
+      } else if (action === DEMO_ACTIONS.SET_CHARACTER) {
+        if (this.multiplayer?.connected) {
+          this.multiplayer.swapCharacter();
+        } else if (this.characters) {
+          this.characters.setLocalCharacter(state.localCharacter);
+        }
       }
     });
     bus.on(DEMO_EVENTS.ZONE_CHANGED, (zone) => {
@@ -400,11 +491,17 @@ export class CampusMapApp {
       this.resetSpawn();
     });
 
-    // Look: mouse uses pointer lock; touch drags anywhere on the canvas (tracked per pointer,
-    // so the joystick finger never turns the camera).
     this.canvas.style.touchAction = "none";
+    this.canvas.addEventListener("contextmenu", (e) => {
+      if (state.cameraMode === CAMERA_MODES.WALK) e.preventDefault();
+    });
     this.canvas.addEventListener("pointerdown", (e) => {
       if (state.cameraMode !== CAMERA_MODES.WALK) return;
+      if (e.pointerType === "mouse" && e.button === 2) {
+        state.aiming = true;
+        bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: DEMO_ACTIONS.TOGGLE_AIM, state });
+        return;
+      }
       if (e.pointerType === "mouse" && e.button !== 0) return;
       if (this._lookPointerId !== null) return;
       this._lookPointerId = e.pointerId;
@@ -441,6 +538,10 @@ export class CampusMapApp {
     });
 
     const endLook = (e) => {
+      if (e.pointerType === "mouse" && e.button === 2 && state.aiming) {
+        state.aiming = false;
+        bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: DEMO_ACTIONS.TOGGLE_AIM, state });
+      }
       if (e.pointerId === this._lookPointerId) {
         this._isDraggingLook = false;
         this._lookPointerId = null;
@@ -468,7 +569,7 @@ export class CampusMapApp {
       parseInlineGlbScene(loader, decodeCampusEnvironmentV3Glb, "campus_environment_v3"),
       parseInlineGlbScene(loader, decodeTreesV4Glb, "trees_v4"),
     ]);
-    this._reportPreload(38, "Decoding Canopy & Horizon ridges…");
+    this._reportPreload(36, "Decoding Canopy & Horizon ridges…");
     await this._yieldFrame();
 
     const [archV5Scene, canopyV6Scene, propsBridgeV6Scene] = await Promise.all([
@@ -476,7 +577,7 @@ export class CampusMapApp {
       parseInlineGlbScene(loader, decodeGradientCanopyV6Glb, "gradient_canopy_v6"),
       parseInlineGlbScene(loader, decodePropsAndBridgeV6Glb, "props_and_bridge_v6"),
     ]);
-    this._reportPreload(62, "Assembling buildings, foliage & bridge…");
+    this._reportPreload(58, "Assembling buildings, foliage & bridge…");
     await this._yieldFrame();
 
     if (typeof deplasticizeCampusPropMaterials === "function" && envV3Scene) {
@@ -503,7 +604,15 @@ export class CampusMapApp {
     }
 
     this.world.finalizeV5PropGrounding?.();
-    this._reportPreload(78, "Decoding campus surface textures…");
+    this._reportPreload(72, "Constructing Backrooms Level 0 expansion…");
+
+    try {
+      await this.backrooms.load(this.scene);
+    } catch (err) {
+      console.warn("[CampusMap] Backrooms load warning:", err);
+    }
+
+    this._reportPreload(82, "Decoding Ronaldo, Messi, Torch & Stalker pack…");
 
     const waitFn = (typeof window !== "undefined" && window.__nativeSetTimeout) || setTimeout;
     if (this.materials?.readyPromise) {
@@ -513,7 +622,6 @@ export class CampusMapApp {
       ]);
     }
 
-    // Re-apply active atmosphere preset so newly attached GLB emissives & ridge shaders sync cleanly
     this.applyAtmosphere(state.atmosphere);
 
     if (typeof applyWorldCohesionShaderHook === "function" && this.world?.root) {
@@ -539,24 +647,50 @@ export class CampusMapApp {
       });
     }
 
-    this._reportPreload(86, "Waking the characters…");
     try {
       const trees = [...(this.world.decTreeTransforms || []), ...(this.world.redTreeTransforms || [])];
-      const chars = await loadCharacters(this.scene, {
+      this.characters = await loadCharacters(this.scene, {
         trees,
+        backrooms: this.backrooms,
+        initialCharacter: state.localCharacter,
         resolveCollisions: (x, z) => this._resolveCollisions(x, z),
       });
-      this.hero = chars.hero;
-      this.watcher = chars.watcher;
+      if (this.multiplayer?.connected && state.coopPlayers.length > 0) {
+        this.characters.syncRemoteRoster(state.coopPlayers, this.multiplayer.playerId);
+      }
     } catch (err) {
       console.warn("[CampusMap] character load failed", err);
     }
 
-    this._reportPreload(90, "Compiling shaders & shadows…");
+    this._reportPreload(92, "Compiling shaders & shadows…");
     await this._yieldFrame();
 
     this.scene.updateMatrixWorld(true);
     this.camera.updateMatrixWorld(true);
+    if (this.characters) {
+      const groundY = getOpenWorldTerrainHeight(this.playerX, this.playerZ);
+      this.camera.getWorldDirection(_camFwdScratch);
+      this.characters.update(
+        0,
+        {
+          x: this.playerX,
+          y: groundY + this._posY,
+          z: this.playerZ,
+          vx: 0,
+          vz: 0,
+          lookYaw: this.playerYaw,
+          lookPitch: this.playerPitch,
+          worldAimDir: _camFwdScratch,
+          sprint: false,
+          flashlightOn: state.flashlightOn,
+          aiming: state.aiming,
+          camera: this.camera,
+          inBackrooms: state.inBackrooms,
+        },
+        { isHost: true, incomingStalkers: null }
+      );
+      this._syncFlashlightRig();
+    }
     this._updateWorldAndLighting(0, true);
     try {
       this.renderer.compile(this.scene, this.camera);
@@ -586,6 +720,14 @@ export class CampusMapApp {
     this.playerPitch = clamp(this.playerPitch + dPitch, CAM_MIN_PITCH, CAM_MAX_PITCH);
   }
 
+  jump() {
+    if (state.cameraMode !== CAMERA_MODES.WALK) return;
+    if (this._grounded) {
+      this._velY = JUMP_IMPULSE_MPS;
+      this._grounded = false;
+    }
+  }
+
   /** Analog joystick: x = right (-1..1), y = forward (-1..1). */
   setAnalog(x, y) {
     this.analog.x = clamp(Number(x) || 0, -1, 1);
@@ -611,17 +753,17 @@ export class CampusMapApp {
     this._lookPointerId = null;
     this.analog.x = 0;
     this.analog.y = 0;
+    if (state.aiming) {
+      state.aiming = false;
+      bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: DEMO_ACTIONS.TOGGLE_AIM, state });
+    }
   }
 
   setFlashlight(enabled) {
     const on = Boolean(enabled);
     state.flashlightOn = on;
-    if (this.flashlight) {
-      this.flashlight.visible = on;
-    }
-    if (this.flashlightFill) {
-      this.flashlightFill.visible = on;
-    }
+    if (this.flashlight) this.flashlight.visible = on;
+    if (this.flashlightFill) this.flashlightFill.visible = on;
   }
 
   applyAtmosphere(presetId) {
@@ -656,13 +798,6 @@ export class CampusMapApp {
 
     if (this.renderer) {
       this.renderer.toneMappingExposure = preset.exposure;
-    }
-
-    if (this.flashlight) {
-      this.flashlight.intensity = preset.id === "night" ? 4.4 : preset.id === "dusk" ? 3.2 : 1.6;
-    }
-    if (this.flashlightFill) {
-      this.flashlightFill.intensity = preset.id === "night" ? 0.44 : preset.id === "dusk" ? 0.28 : 0.12;
     }
 
     if (this.world && typeof this.world.setAtmosphere === "function") {
@@ -703,6 +838,9 @@ export class CampusMapApp {
     const resolved = this._resolveCollisions(safeX, safeZ);
     this.playerX = resolved.x;
     this.playerZ = resolved.z;
+    this._posY = 0;
+    this._velY = 0;
+    this._grounded = true;
     if (Number.isFinite(yaw)) {
       this.playerYaw = yaw;
     }
@@ -742,33 +880,38 @@ export class CampusMapApp {
     this.camera.updateProjectionMatrix();
   }
 
-  _resolveCollisions(x, z) {
+  _resolveCollisions(x, z, radius = PLAYER_RADIUS_M) {
     let rx = clamp(x, WORLD_BOUNDS.minX + 1.5, WORLD_BOUNDS.maxX - 1.5);
     let rz = clamp(z, WORLD_BOUNDS.minZ + 1.5, WORLD_BOUNDS.maxZ - 1.5);
-    const colliders = this.world?.getBuildingColliders?.();
-    if (!colliders || colliders.length === 0) {
-      return { x: rx, z: rz };
-    }
 
-    const r = PLAYER_RADIUS_M;
-    for (let i = 0; i < colliders.length; i++) {
-      const box = colliders[i];
-      const minX = box.minX - r;
-      const maxX = box.maxX + r;
-      const minZ = box.minZ - r;
-      const maxZ = box.maxZ + r;
-      if (rx > minX && rx < maxX && rz > minZ && rz < maxZ) {
-        const dxLeft = rx - minX;
-        const dxRight = maxX - rx;
-        const dzTop = rz - minZ;
-        const dzBot = maxZ - rz;
-        const minPen = Math.min(dxLeft, dxRight, dzTop, dzBot);
-        if (minPen === dxLeft) rx = minX;
-        else if (minPen === dxRight) rx = maxX;
-        else if (minPen === dzTop) rz = minZ;
-        else rz = maxZ;
+    const colliders = this.world?.getBuildingColliders?.();
+    if (colliders && colliders.length > 0) {
+      for (let i = 0; i < colliders.length; i++) {
+        const box = colliders[i];
+        const minX = box.minX - radius;
+        const maxX = box.maxX + radius;
+        const minZ = box.minZ - radius;
+        const maxZ = box.maxZ + radius;
+        if (rx > minX && rx < maxX && rz > minZ && rz < maxZ) {
+          const dxLeft = rx - minX;
+          const dxRight = maxX - rx;
+          const dzTop = rz - minZ;
+          const dzBot = maxZ - rz;
+          const minPen = Math.min(dxLeft, dxRight, dzTop, dzBot);
+          if (minPen === dxLeft) rx = minX;
+          else if (minPen === dxRight) rx = maxX;
+          else if (minPen === dzTop) rz = minZ;
+          else rz = maxZ;
+        }
       }
     }
+
+    if (this.backrooms && this.backrooms.ready) {
+      const br = this.backrooms.resolveCollisions(rx, rz, radius);
+      rx = br.x;
+      rz = br.z;
+    }
+
     return { x: rx, z: rz };
   }
 
@@ -781,14 +924,15 @@ export class CampusMapApp {
 
     let targetVx = 0;
     let targetVz = 0;
-    const sprinting = this.input.sprint || stickSprint;
+    const sprinting = (this.input.sprint || stickSprint) && !state.aiming;
     this._sprinting = sprinting;
-    const speedLimit = (sprinting ? SPRINT_SPEED_MPS : WALK_SPEED_MPS) * (this.input.sprint ? 1 : Math.max(stick, 0.35));
+    const speedLimit =
+      (sprinting ? SPRINT_SPEED_MPS : state.aiming ? 3.2 : WALK_SPEED_MPS) *
+      (this.input.sprint ? 1 : Math.max(stick, 0.35));
 
     if (isMovingInput) {
       const sinY = Math.sin(this.playerYaw);
       const cosY = Math.cos(this.playerYaw);
-      // Forward vector for yaw=0 is (0, -1); Right vector is (1, 0)
       const fwdX = -sinY;
       const fwdZ = -cosY;
       const rightX = cosY;
@@ -822,32 +966,97 @@ export class CampusMapApp {
       this.playerZ = slideZ.z;
     }
 
-    this._syncWalkCamera(dt, speed);
+    // Vertical jump & gravity
+    if (!this._grounded || this._velY !== 0) {
+      this._velY += GRAVITY_MPS2 * dt;
+      this._posY += this._velY * dt;
+      if (state.inBackrooms && this._posY > BACKROOMS_CEILING_Y - 1.95) {
+        this._posY = BACKROOMS_CEILING_Y - 1.95;
+        if (this._velY > 0) this._velY = 0;
+      }
+      if (this._posY <= 0) {
+        this._posY = 0;
+        this._velY = 0;
+        this._grounded = true;
+      }
+    }
+
+    this._syncWalkCamera(dt);
   }
 
-  _syncWalkCamera(dt, speed = 0) {
+  _syncWalkCamera(dt) {
+    const inBackrooms = this.backrooms?.isInsideBackrooms?.(this.playerX, this.playerZ) || false;
+    const inVestibule =
+      this.playerX >= 47.0 && this.playerX <= 55.0 && this.playerZ >= 123.5 && this.playerZ <= 132.0;
+    const tightEnclosure = inBackrooms || inVestibule;
+
+    const targetDist = state.aiming ? (tightEnclosure ? 1.65 : 2.35) : tightEnclosure ? 2.15 : 3.85;
+    const targetRight = state.aiming ? 0.54 : tightEnclosure ? 0.34 : 0.42;
+    const camLerp = dt > 0 ? 1 - Math.exp(-12 * dt) : 1;
+    this._camDistCurrent += (targetDist - this._camDistCurrent) * camLerp;
+    this._camRightCurrent += (targetRight - this._camRightCurrent) * camLerp;
+
+    const targetFov = state.aiming ? 53 : 62;
+    if (Math.abs(this.camera.fov - targetFov) > 0.05) {
+      this.camera.fov += (targetFov - this.camera.fov) * camLerp;
+      this.camera.updateProjectionMatrix();
+    }
+
     const groundY = getOpenWorldTerrainHeight(this.playerX, this.playerZ);
-    const tx = this.playerX;
-    const ty = groundY + CAM_TARGET_HEIGHT_M;
-    const tz = this.playerZ;
-    const cp = Math.cos(this.playerPitch);
-    // Camera sits behind the hero, opposite the look direction; pitch > 0 raises it.
-    let cx = tx + Math.sin(this.playerYaw) * cp * CAM_DISTANCE_M;
-    let cz = tz + Math.cos(this.playerYaw) * cp * CAM_DISTANCE_M;
-    let cy = ty + Math.sin(this.playerPitch) * CAM_DISTANCE_M + 0.35;
-    const camGround = getOpenWorldTerrainHeight(cx, cz) + 0.4;
+    const rightX = Math.cos(this.playerYaw);
+    const rightZ = -Math.sin(this.playerYaw);
+
+    const tx = this.playerX + rightX * this._camRightCurrent;
+    const ty = groundY + this._posY + CAM_TARGET_HEIGHT_M;
+    const tz = this.playerZ + rightZ * this._camRightCurrent;
+
+    const effectivePitch = tightEnclosure
+      ? clamp(this.playerPitch, -0.45, 0.55)
+      : this.playerPitch;
+    const cp = Math.cos(effectivePitch);
+
+    let cx = tx + Math.sin(this.playerYaw) * cp * this._camDistCurrent;
+    let cz = tz + Math.cos(this.playerYaw) * cp * this._camDistCurrent;
+    let cy = ty + Math.sin(effectivePitch) * this._camDistCurrent + 0.28;
+
+    // Prevent camera from clipping through Backrooms walls
+    if (this.backrooms?.ready && tightEnclosure) {
+      for (let step = 1; step <= 6; step++) {
+        const u = step / 6;
+        const sx = tx + (cx - tx) * u;
+        const sz = tz + (cz - tz) * u;
+        const res = this.backrooms.resolveCollisions(sx, sz, 0.28);
+        if (Math.hypot(res.x - sx, res.z - sz) > 0.06) {
+          const safeU = Math.max(0.22, (step - 1) / 6);
+          cx = tx + (cx - tx) * safeU;
+          cz = tz + (cz - tz) * safeU;
+          cy = ty + (cy - ty) * safeU;
+          break;
+        }
+      }
+      if (cy > BACKROOMS_CEILING_Y - 0.28) {
+        cy = BACKROOMS_CEILING_Y - 0.28;
+      }
+    }
+
+    const camGround = getOpenWorldTerrainHeight(cx, cz) + 0.35;
     if (cy < camGround) cy = camGround;
+
     this.camera.position.set(cx, cy, cz);
     this.camera.lookAt(tx, ty, tz);
 
     state.playerPos.x = this.playerX;
-    state.playerPos.y = groundY + EYE_HEIGHT_M;
+    state.playerPos.y = groundY + this._posY + EYE_HEIGHT_M;
     state.playerPos.z = this.playerZ;
     state.playerYaw = this.playerYaw;
     state.playerPitch = this.playerPitch;
   }
 
   _updateNearestZone() {
+    if (state.inBackrooms) {
+      state.activeZone = "backrooms";
+      return;
+    }
     let bestId = state.activeZone;
     let bestDistSq = Infinity;
     for (let i = 0; i < MAP_ZONES.length; i++) {
@@ -861,6 +1070,52 @@ export class CampusMapApp {
       }
     }
     state.activeZone = bestId;
+  }
+
+  _syncFlashlightRig() {
+    if (!this.flashlight || !this.flashlightFill) return;
+    const isBackrooms = state.inBackrooms;
+    const baseSpot =
+      this._activePreset.id === "night"
+        ? 4.8
+        : this._activePreset.id === "dusk"
+          ? 3.5
+          : 1.8;
+    const baseFill =
+      this._activePreset.id === "night"
+        ? 0.52
+        : this._activePreset.id === "dusk"
+          ? 0.34
+          : 0.14;
+
+    const aimMult = state.aiming ? 1.42 : 1.0;
+    const brMult = isBackrooms ? 1.25 : 1.0;
+    this.flashlight.intensity = baseSpot * aimMult * brMult;
+    this.flashlight.angle = state.aiming ? Math.PI * 0.13 : Math.PI * 0.19;
+    this.flashlight.distance = state.aiming ? 84 : 68;
+    this.flashlightFill.intensity = baseFill * brMult;
+
+    if (state.cameraMode === CAMERA_MODES.WALK && this.characters?.localHero) {
+      const hero = this.characters.localHero;
+      this.flashlight.position.copy(hero.lensWorldPos);
+      this.flashlight.target.position
+        .copy(hero.lensWorldPos)
+        .addScaledVector(hero.lensWorldDir, 24.0);
+      this.flashlight.target.updateMatrixWorld();
+      this.flashlightFill.position
+        .copy(hero.lensWorldPos)
+        .addScaledVector(hero.lensWorldDir, 0.45);
+    } else {
+      this.camera.getWorldDirection(_camFwdScratch);
+      this.flashlight.position.copy(this.camera.position);
+      this.flashlight.target.position
+        .copy(this.camera.position)
+        .addScaledVector(_camFwdScratch, 24.0);
+      this.flashlight.target.updateMatrixWorld();
+      this.flashlightFill.position
+        .copy(this.camera.position)
+        .addScaledVector(_camFwdScratch, 0.45);
+    }
   }
 
   _updateWorldAndLighting(dt, forceStaticRebuild = false) {
@@ -880,14 +1135,31 @@ export class CampusMapApp {
 
     this.world.update(dt, snap, snap, this.camera);
 
+    // Blend fog & background smoothly when inside the Backrooms Level 0 complex
+    const targetBr = state.inBackrooms ? 1.0 : 0.0;
+    const fogLerp = dt > 0 ? 1 - Math.exp(-5.0 * dt) : 1.0;
+    this._backroomsBlend += (targetBr - this._backroomsBlend) * fogLerp;
+
+    if (this.scene?.fog?.isFogExp2 && this.scene?.background?.isColor) {
+      _presetFogColor.set(this._activePreset.fogColor);
+      _presetSkyColor.set(this._activePreset.skyZenith);
+      this.scene.fog.color.copy(_presetFogColor).lerp(_backroomsFogColor, this._backroomsBlend);
+      this.scene.fog.density = THREE.MathUtils.lerp(
+        this._activePreset.fogDensity,
+        0.048,
+        this._backroomsBlend
+      );
+      this.scene.background.copy(_presetSkyColor).lerp(_backroomsSkyColor, this._backroomsBlend);
+    }
+
     if (this.v5Lighting?.updateFrame) {
       const fo = this._lightingFrameOpts;
-      fo.enclosedGym = Math.abs(this.playerX) < 18.0 && this.playerZ > 131.2;
+      fo.enclosedGym = (Math.abs(this.playerX) < 18.0 && this.playerZ > 131.2) || state.inBackrooms;
       fo.sequenceTime = this._elapsedSec;
       fo.isSoftwareRenderer = this.isSoftwareRenderer;
       fo.enforceGoldenHourPalette = false;
       fo.sunDir = this._activeDirVec;
-      fo.sunIntensity = this._activePreset.dirIntensity;
+      fo.sunIntensity = this._activePreset.dirIntensity * (1.0 - 0.85 * this._backroomsBlend);
       fo.forceStaticRebuild = forceStaticRebuild;
       this.v5Lighting.updateFrame(snap, this.camera, fo);
     }
@@ -898,6 +1170,14 @@ export class CampusMapApp {
     const safeDt = Math.min(Math.max(Number(dt) || 0, 0), 0.08);
     this._elapsedSec += safeDt;
 
+    if (this._alertClearTimer > 0) {
+      this._alertClearTimer -= safeDt;
+      if (this._alertClearTimer <= 0 && state.stalkerAlert) {
+        state.stalkerAlert = "";
+        bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: "ALERT_CLEAR", state });
+      }
+    }
+
     if (state.cameraMode === CAMERA_MODES.ORBIT) {
       this.orbitControls.update();
       state.playerSpeedMps = 0;
@@ -907,20 +1187,98 @@ export class CampusMapApp {
       this._stepWalk(safeDt);
     }
 
+    // Track Backrooms realm transitions & check No-Clip anomalies
+    const nowInBackrooms = this.backrooms?.isInsideBackrooms?.(this.playerX, this.playerZ) || false;
+    if (nowInBackrooms !== state.inBackrooms) {
+      state.inBackrooms = nowInBackrooms;
+      this._updateNearestZone();
+      if (nowInBackrooms && !state.stalkerAlert) {
+        this._setAlert("LEVEL 0 · THE BACKROOMS", 2.8);
+      }
+      bus.emit(DEMO_EVENTS.STATE_CHANGED, { action: "REALM_CHANGE", state });
+    }
+
+    if (this.backrooms?.ready) {
+      const anomaly = this.backrooms.update(safeDt, this._elapsedSec, this.playerX, this.playerZ);
+      if (anomaly) {
+        this.teleportTo(
+          BACKROOMS_WARP_ARRIVAL.x,
+          BACKROOMS_WARP_ARRIVAL.z,
+          BACKROOMS_WARP_ARRIVAL.yaw
+        );
+        state.inBackrooms = true;
+        this._updateNearestZone();
+        this._setAlert("NO-CLIPPED INTO THE BACKROOMS · FIND THE NORTH EXIT", 4.5);
+      }
+    }
+
     if (this._elapsedSec - this._lastZoneCheckSec >= 0.25) {
       this._lastZoneCheckSec = this._elapsedSec;
       this._updateNearestZone();
     }
 
-    if (this.hero) {
-      this.hero.update(safeDt, this.playerX, this.playerZ, this._velX, this._velZ, this._sprinting);
-    }
-    if (this.watcher) {
-      this.camera.updateMatrixWorld();
-      this.watcher.update(safeDt, this.playerX, this.playerZ, this.camera);
-      state.watcherMode = this.watcher.mode;
+    // Compute world aim direction from camera reticle target so character torch shines where player looks
+    this.camera.updateMatrixWorld();
+    this.camera.getWorldDirection(_camFwdScratch);
+    _camRightScratch.set(Math.cos(this.playerYaw), 0, -Math.sin(this.playerYaw));
+    const groundY = getOpenWorldTerrainHeight(this.playerX, this.playerZ);
+    _handApproxScratch.set(
+      this.playerX + _camRightScratch.x * 0.22,
+      groundY + this._posY + 1.32,
+      this.playerZ + _camRightScratch.z * 0.22
+    );
+    _aimTargetScratch.copy(this.camera.position).addScaledVector(_camFwdScratch, 22.0);
+    _aimDirScratch.copy(_aimTargetScratch).sub(_handApproxScratch).normalize();
+
+    if (this.characters) {
+      const charRes = this.characters.update(
+        safeDt,
+        {
+          x: this.playerX,
+          y: groundY + this._posY,
+          z: this.playerZ,
+          vx: this._velX,
+          vz: this._velZ,
+          lookYaw: this.playerYaw,
+          lookPitch: this.playerPitch,
+          worldAimDir: _aimDirScratch,
+          sprint: this._sprinting,
+          flashlightOn: state.flashlightOn,
+          aiming: state.aiming,
+          camera: this.camera,
+          inBackrooms: state.inBackrooms,
+        },
+        {
+          isHost: !this.multiplayer?.connected || this.multiplayer.isHost,
+          incomingStalkers: this.multiplayer?.incomingStalkers,
+        }
+      );
+
+      if (charRes?.stalkerAlert === "stalker_dash" && !state.stalkerAlert) {
+        this._setAlert("SOMETHING JUST SPRINTED PAST YOU", 2.4);
+      }
+
+      if (this.multiplayer?.connected) {
+        this.multiplayer.sendPlayerState({
+          x: this.playerX,
+          y: groundY + this._posY,
+          z: this.playerZ,
+          yaw: this.playerYaw,
+          pitch: this.playerPitch,
+          vx: this._velX,
+          vz: this._velZ,
+          sprint: this._sprinting,
+          flashlightOn: state.flashlightOn,
+          aiming: state.aiming,
+          inBackrooms: state.inBackrooms,
+        });
+        if (this.multiplayer.isHost) {
+          this.multiplayer.sendStalkers(this.characters.stalkerPack.serializeForNetwork());
+        }
+      }
     }
 
+    this._syncFlashlightRig();
     this._updateWorldAndLighting(safeDt, false);
     this.renderer.render(this.scene, this.camera);
   }

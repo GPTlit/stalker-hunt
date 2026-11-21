@@ -53,6 +53,12 @@ function boot() {
   if (flags.cameraMode) {
     state.cameraMode = flags.cameraMode;
   }
+  if (flags.character) {
+    state.localCharacter = flags.character;
+  }
+  if (flags.room) {
+    state.roomId = flags.room;
+  }
 
   const canvas = document.getElementById("stage-canvas");
   if (!canvas) return;
@@ -115,6 +121,9 @@ function boot() {
   if (flags.cameraMode) {
     dispatchAction(DEMO_ACTIONS.SET_CAMERA_MODE, flags.cameraMode);
   }
+  if (flags.room) {
+    app.joinCoopRoom(flags.room, state.localCharacter);
+  }
   ui.syncAll();
 
   const keysDown = new Set();
@@ -152,6 +161,12 @@ function boot() {
       return;
     }
 
+    if (code === "Space") {
+      e.preventDefault();
+      app.jump();
+      return;
+    }
+
     if (e.repeat) return;
 
     if (code === "Tab") {
@@ -161,6 +176,10 @@ function boot() {
       dispatchAction(DEMO_ACTIONS.SET_CAMERA_MODE, nextCam);
     } else if (code === "KeyF") {
       dispatchAction(DEMO_ACTIONS.TOGGLE_FLASHLIGHT);
+    } else if (code === "KeyQ") {
+      dispatchAction(DEMO_ACTIONS.TOGGLE_AIM);
+    } else if (code === "KeyO") {
+      dispatchAction(DEMO_ACTIONS.TOGGLE_COOP);
     } else if (code === "KeyM") {
       dispatchAction(DEMO_ACTIONS.TOGGLE_MAP);
     } else if (code === "KeyH") {

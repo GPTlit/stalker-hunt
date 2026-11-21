@@ -11,7 +11,7 @@ export const WORLD_BOUNDS = Object.freeze({
   minX: -235,
   maxX: 235,
   minZ: -235,
-  maxZ: 185,
+  maxZ: 215,
 });
 
 export const CAMPUS_ROADS = Object.freeze([
@@ -59,6 +59,7 @@ export const MAP_ZONES = Object.freeze([
   { id: "courtyard", label: "Courtyard", fullName: "West Courtyard", x: -118.0, z: -42.0, yaw: Math.PI },
   { id: "waterfront", label: "Waterfront", fullName: "East Basin Promenade", x: 156.0, z: 22.0, yaw: Math.PI * 0.5 },
   { id: "shoreline", label: "Shoreline", fullName: "North Amphitheatre", x: 14.0, z: -172.0, yaw: 0.0 },
+  { id: "backrooms", label: "Backrooms", fullName: "Level 0 · The Backrooms", x: 48.0, z: 136.0, yaw: Math.PI },
 ]);
 
 export const ATMOSPHERE_PRESETS = Object.freeze({
@@ -129,6 +130,9 @@ export const CAMERA_MODES = Object.freeze({
 export const DEMO_ACTIONS = Object.freeze({
   SET_CAMERA_MODE: "SET_CAMERA_MODE",
   TOGGLE_FLASHLIGHT: "TOGGLE_FLASHLIGHT",
+  TOGGLE_AIM: "TOGGLE_AIM",
+  SET_CHARACTER: "SET_CHARACTER",
+  TOGGLE_COOP: "TOGGLE_COOP",
   SET_ATMOSPHERE: "SET_ATMOSPHERE",
   JUMP_ZONE: "JUMP_ZONE",
   TELEPORT_XZ: "TELEPORT_XZ",
@@ -177,8 +181,12 @@ export const state = {
   loadStage: "Initializing terrain…",
   cameraMode: CAMERA_MODES.WALK,
   flashlightOn: true,
+  aiming: false,
+  localCharacter: "ronaldo",
   atmosphere: "night",
+  inBackrooms: false,
   mapExpanded: false,
+  coopOpen: false,
   hudHidden: false,
   pointerLocked: false,
   activeZone: "canopy",
@@ -188,6 +196,11 @@ export const state = {
   playerSpeedMps: 0.0,
   isMoving: false,
   isSprinting: false,
+  roomId: "",
+  coopConnected: false,
+  coopIsHost: true,
+  coopPlayers: [],
+  stalkerAlert: "",
   qualityTier: "high",
   isSoftwareRenderer: false,
   fps: 60,
@@ -207,11 +220,15 @@ export function parseInitialUrlFlags() {
     const atmo = p.get("atmosphere");
     const cam = p.get("camera");
     const zone = p.get("zone");
+    const room = p.get("room");
+    const char = p.get("char");
     return {
       hudHidden: p.get("hud") === "0" || p.get("clean") === "1",
       atmosphere: atmo && ATMOSPHERE_PRESETS[atmo] ? atmo : null,
       cameraMode: cam === "orbit" ? CAMERA_MODES.ORBIT : cam === "walk" ? CAMERA_MODES.WALK : null,
       zone: zone || null,
+      room: room ? room.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 16) : null,
+      character: char === "messi" ? "messi" : char === "ronaldo" ? "ronaldo" : null,
     };
   } catch {
     return {};
@@ -230,6 +247,22 @@ export function dispatchAction(action, payload = null) {
       state.flashlightOn = typeof payload === "boolean" ? payload : !state.flashlightOn;
       bus.emit(DEMO_EVENTS.STATE_CHANGED, { action, state });
       return state.flashlightOn;
+    }
+    case DEMO_ACTIONS.TOGGLE_AIM: {
+      state.aiming = typeof payload === "boolean" ? payload : !state.aiming;
+      bus.emit(DEMO_EVENTS.STATE_CHANGED, { action, state });
+      return state.aiming;
+    }
+    case DEMO_ACTIONS.SET_CHARACTER: {
+      const charId = payload === "messi" ? "messi" : "ronaldo";
+      state.localCharacter = charId;
+      bus.emit(DEMO_EVENTS.STATE_CHANGED, { action, payload: charId, state });
+      return charId;
+    }
+    case DEMO_ACTIONS.TOGGLE_COOP: {
+      state.coopOpen = typeof payload === "boolean" ? payload : !state.coopOpen;
+      bus.emit(DEMO_EVENTS.STATE_CHANGED, { action, state });
+      return state.coopOpen;
     }
     case DEMO_ACTIONS.SET_ATMOSPHERE: {
       const key = ATMOSPHERE_PRESETS[payload] ? payload : "night";

@@ -974,7 +974,9 @@ export function getOpenWorldTerrainHeight(x, z) {
   // 1. Exact rendered riding surface datum (`0.000m` inside Fitness Center gym floor `z >= 127.0`,
   //    smooth taper `127.0 -> 125.92`, and `+0.016m` on campus asphalt roads & stone paver promenades!)
   let baseGround = earthY;
-  if (Math.abs(px) <= 12.5 && pz >= 127.0) {
+  if (px >= 28.0 && px <= 102.0 && pz >= 122.0 && pz <= 205.0) {
+    baseGround = 0.0;
+  } else if (Math.abs(px) <= 12.5 && pz >= 127.0) {
     baseGround = 0.0;
   } else if (Math.abs(px) <= 26.0 && pz > 125.92 && pz < 127.0) {
     const uTap = clamp((127.0 - pz) / (127.0 - 125.92), 0.0, 1.0);
