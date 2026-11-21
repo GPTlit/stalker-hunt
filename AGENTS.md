@@ -30,3 +30,5 @@ use the editor.
 <!-- LOVABLE:END -->
 
 - The 3D map is a standalone static three.js app in public/map, embedded full-screen by the / route via iframe; it keeps its original module/importmap setup that Vite bundling would break.
+- Map characters live in public/map/game/characters.js (hero + Watcher AI), driven from CampusMapApp.advanceFrame; models are MIT three.js example GLBs in public/map/assets/chars.
+- Map UI actions reach core.js only via DEMO_EVENTS.STATE_CHANGED (dispatchAction never emits action names directly).

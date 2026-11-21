@@ -36,6 +36,7 @@ import {
   configureAAASunShadowsAndAtmosphere,
   applyWorldCohesionShaderHook,
 } from "./scenes/v5_postfx_lighting.js";
+import { loadCharacters } from "./game/characters.js";
 
 const EYE_HEIGHT_M = 1.70;
 const WALK_SPEED_MPS = 4.6;
@@ -43,6 +44,11 @@ const SPRINT_SPEED_MPS = 8.6;
 const PLAYER_RADIUS_M = 0.45;
 const MAX_PITCH_RAD = (78 * Math.PI) / 180;
 const MOUSE_SENSITIVITY = 0.0022;
+const TOUCH_LOOK_SENSITIVITY = 0.0048;
+const CAM_DISTANCE_M = 4.6;
+const CAM_TARGET_HEIGHT_M = 1.55;
+const CAM_MIN_PITCH = -0.55;
+const CAM_MAX_PITCH = 1.05;
 
 function detectSoftwareWebGLRenderer() {
   try {
@@ -172,6 +178,10 @@ export class CampusMapApp {
       right: false,
       sprint: false,
     };
+    this.analog = { x: 0, y: 0 };
+    this._lookPointerId = null;
+    this.hero = null;
+    this.watcher = null;
 
     // Zero-GC reusable scratch records
     this._worldSnap = {
@@ -364,15 +374,17 @@ export class CampusMapApp {
   }
 
   _bindBusAndPointerControls() {
-    bus.on(DEMO_ACTIONS.SET_CAMERA_MODE, () => {
-      this.setCameraMode(state.cameraMode);
-    });
-    bus.on(DEMO_ACTIONS.TOGGLE_FLASHLIGHT, () => {
-      this.setFlashlight(state.flashlightOn);
-    });
-    bus.on(DEMO_ACTIONS.SET_ATMOSPHERE, () => {
-      this.applyAtmosphere(state.atmosphere);
-      this.setFlashlight(state.flashlightOn);
+    // dispatchAction() emits STATE_CHANGED with the action name, so listen there.
+    bus.on(DEMO_EVENTS.STATE_CHANGED, (evt) => {
+      const action = evt && evt.action;
+      if (action === DEMO_ACTIONS.SET_CAMERA_MODE) {
+        this.setCameraMode(state.cameraMode);
+      } else if (action === DEMO_ACTIONS.TOGGLE_FLASHLIGHT) {
+        this.setFlashlight(state.flashlightOn);
+      } else if (action === DEMO_ACTIONS.SET_ATMOSPHERE) {
+        this.applyAtmosphere(state.atmosphere);
+        this.setFlashlight(state.flashlightOn);
+      }
     });
     bus.on(DEMO_EVENTS.ZONE_CHANGED, (zone) => {
       if (zone) {
@@ -388,58 +400,54 @@ export class CampusMapApp {
       this.resetSpawn();
     });
 
-    // Pointer lock & drag fallback for first-person look in Walk mode
+    // Look: mouse uses pointer lock; touch drags anywhere on the canvas (tracked per pointer,
+    // so the joystick finger never turns the camera).
+    this.canvas.style.touchAction = "none";
     this.canvas.addEventListener("pointerdown", (e) => {
-      if (state.cameraMode !== CAMERA_MODES.WALK || e.button !== 0) return;
+      if (state.cameraMode !== CAMERA_MODES.WALK) return;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      if (this._lookPointerId !== null) return;
+      this._lookPointerId = e.pointerId;
       this._isDraggingLook = true;
       this._lastDragX = e.clientX;
       this._lastDragY = e.clientY;
       if (
+        e.pointerType === "mouse" &&
         document.pointerLockElement !== this.canvas &&
         typeof this.canvas.requestPointerLock === "function"
       ) {
         try {
           const maybePromise = this.canvas.requestPointerLock();
-          if (maybePromise && typeof maybePromise.catch === "function") {
-            maybePromise.catch(() => {});
-          }
+          if (maybePromise && typeof maybePromise.catch === "function") maybePromise.catch(() => {});
         } catch {
-          // Iframe / headless environments stay usable via drag-to-look fallback
+          // drag fallback
         }
       }
     });
 
     window.addEventListener("pointermove", (e) => {
       if (state.cameraMode !== CAMERA_MODES.WALK) return;
-      if (document.pointerLockElement === this.canvas) {
+      if (document.pointerLockElement === this.canvas && e.pointerType === "mouse") {
         const dx = clamp(e.movementX || 0, -140, 140);
         const dy = clamp(e.movementY || 0, -140, 140);
-        this.playerYaw -= dx * MOUSE_SENSITIVITY;
-        this.playerPitch = clamp(
-          this.playerPitch - dy * MOUSE_SENSITIVITY,
-          -MAX_PITCH_RAD,
-          MAX_PITCH_RAD
-        );
-      } else if (this._isDraggingLook) {
+        this._applyLook(dx * MOUSE_SENSITIVITY, dy * MOUSE_SENSITIVITY);
+      } else if (this._isDraggingLook && e.pointerId === this._lookPointerId) {
         const dx = clamp(e.clientX - this._lastDragX, -140, 140);
         const dy = clamp(e.clientY - this._lastDragY, -140, 140);
         this._lastDragX = e.clientX;
         this._lastDragY = e.clientY;
-        this.playerYaw -= dx * MOUSE_SENSITIVITY * 1.2;
-        this.playerPitch = clamp(
-          this.playerPitch - dy * MOUSE_SENSITIVITY * 1.2,
-          -MAX_PITCH_RAD,
-          MAX_PITCH_RAD
-        );
+        this._applyLook(dx * TOUCH_LOOK_SENSITIVITY, dy * TOUCH_LOOK_SENSITIVITY);
       }
     });
 
-    window.addEventListener("pointerup", () => {
-      this._isDraggingLook = false;
-    });
-    window.addEventListener("pointercancel", () => {
-      this._isDraggingLook = false;
-    });
+    const endLook = (e) => {
+      if (e.pointerId === this._lookPointerId) {
+        this._isDraggingLook = false;
+        this._lookPointerId = null;
+      }
+    };
+    window.addEventListener("pointerup", endLook);
+    window.addEventListener("pointercancel", endLook);
 
     document.addEventListener("pointerlockchange", () => {
       const locked = document.pointerLockElement === this.canvas;
@@ -531,6 +539,19 @@ export class CampusMapApp {
       });
     }
 
+    this._reportPreload(86, "Waking the characters…");
+    try {
+      const trees = [...(this.world.decTreeTransforms || []), ...(this.world.redTreeTransforms || [])];
+      const chars = await loadCharacters(this.scene, {
+        trees,
+        resolveCollisions: (x, z) => this._resolveCollisions(x, z),
+      });
+      this.hero = chars.hero;
+      this.watcher = chars.watcher;
+    } catch (err) {
+      console.warn("[CampusMap] character load failed", err);
+    }
+
     this._reportPreload(90, "Compiling shaders & shadows…");
     await this._yieldFrame();
 
@@ -560,6 +581,17 @@ export class CampusMapApp {
     return true;
   }
 
+  _applyLook(dYaw, dPitch) {
+    this.playerYaw -= dYaw;
+    this.playerPitch = clamp(this.playerPitch + dPitch, CAM_MIN_PITCH, CAM_MAX_PITCH);
+  }
+
+  /** Analog joystick: x = right (-1..1), y = forward (-1..1). */
+  setAnalog(x, y) {
+    this.analog.x = clamp(Number(x) || 0, -1, 1);
+    this.analog.y = clamp(Number(y) || 0, -1, 1);
+  }
+
   setInputState(patch) {
     if (!patch) return;
     if (patch.forward !== undefined) this.input.forward = Boolean(patch.forward);
@@ -576,6 +608,9 @@ export class CampusMapApp {
     this.input.right = false;
     this.input.sprint = false;
     this._isDraggingLook = false;
+    this._lookPointerId = null;
+    this.analog.x = 0;
+    this.analog.y = 0;
   }
 
   setFlashlight(enabled) {
@@ -691,7 +726,7 @@ export class CampusMapApp {
 
   resetSpawn() {
     const spawn = MAP_ZONES[0];
-    this.playerPitch = -0.02;
+    this.playerPitch = 0.18;
     this.teleportTo(spawn.x, spawn.z, spawn.yaw);
     state.activeZone = spawn.id;
   }
@@ -738,13 +773,17 @@ export class CampusMapApp {
   }
 
   _stepWalk(dt) {
-    const moveFwd = (this.input.forward ? 1 : 0) - (this.input.backward ? 1 : 0);
-    const moveRight = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
-    const isMovingInput = moveFwd !== 0 || moveRight !== 0;
+    const moveFwd = clamp((this.input.forward ? 1 : 0) - (this.input.backward ? 1 : 0) + this.analog.y, -1, 1);
+    const moveRight = clamp((this.input.right ? 1 : 0) - (this.input.left ? 1 : 0) + this.analog.x, -1, 1);
+    const stick = Math.min(1, Math.hypot(moveFwd, moveRight));
+    const isMovingInput = stick > 0.08;
+    const stickSprint = Math.hypot(this.analog.x, this.analog.y) > 0.92;
 
     let targetVx = 0;
     let targetVz = 0;
-    const speedLimit = this.input.sprint ? SPRINT_SPEED_MPS : WALK_SPEED_MPS;
+    const sprinting = this.input.sprint || stickSprint;
+    this._sprinting = sprinting;
+    const speedLimit = (sprinting ? SPRINT_SPEED_MPS : WALK_SPEED_MPS) * (this.input.sprint ? 1 : Math.max(stick, 0.35));
 
     if (isMovingInput) {
       const sinY = Math.sin(this.playerYaw);
@@ -771,7 +810,7 @@ export class CampusMapApp {
     const speed = Math.hypot(this._velX, this._velZ);
     state.playerSpeedMps = speed;
     state.isMoving = speed > 0.15;
-    state.isSprinting = this.input.sprint && state.isMoving;
+    state.isSprinting = sprinting && state.isMoving;
 
     if (speed > 0.005) {
       const nextX = this.playerX + this._velX * dt;
@@ -788,20 +827,21 @@ export class CampusMapApp {
 
   _syncWalkCamera(dt, speed = 0) {
     const groundY = getOpenWorldTerrainHeight(this.playerX, this.playerZ);
-    let bobOffset = 0;
-    if (speed > 0.25 && dt > 0) {
-      const bobRate = this.input.sprint ? 12.5 : 8.5;
-      this._bobPhase += dt * bobRate;
-      const amp = Math.min(1.0, speed / WALK_SPEED_MPS) * (this.input.sprint ? 0.042 : 0.026);
-      bobOffset = Math.sin(this._bobPhase) * amp;
-    }
-    const eyeY = groundY + EYE_HEIGHT_M + bobOffset;
-
-    this.camera.position.set(this.playerX, eyeY, this.playerZ);
-    this.camera.rotation.set(this.playerPitch, this.playerYaw, 0, "YXZ");
+    const tx = this.playerX;
+    const ty = groundY + CAM_TARGET_HEIGHT_M;
+    const tz = this.playerZ;
+    const cp = Math.cos(this.playerPitch);
+    // Camera sits behind the hero, opposite the look direction; pitch > 0 raises it.
+    let cx = tx + Math.sin(this.playerYaw) * cp * CAM_DISTANCE_M;
+    let cz = tz + Math.cos(this.playerYaw) * cp * CAM_DISTANCE_M;
+    let cy = ty + Math.sin(this.playerPitch) * CAM_DISTANCE_M + 0.35;
+    const camGround = getOpenWorldTerrainHeight(cx, cz) + 0.4;
+    if (cy < camGround) cy = camGround;
+    this.camera.position.set(cx, cy, cz);
+    this.camera.lookAt(tx, ty, tz);
 
     state.playerPos.x = this.playerX;
-    state.playerPos.y = eyeY;
+    state.playerPos.y = groundY + EYE_HEIGHT_M;
     state.playerPos.z = this.playerZ;
     state.playerYaw = this.playerYaw;
     state.playerPitch = this.playerPitch;
@@ -870,6 +910,15 @@ export class CampusMapApp {
     if (this._elapsedSec - this._lastZoneCheckSec >= 0.25) {
       this._lastZoneCheckSec = this._elapsedSec;
       this._updateNearestZone();
+    }
+
+    if (this.hero) {
+      this.hero.update(safeDt, this.playerX, this.playerZ, this._velX, this._velZ, this._sprinting);
+    }
+    if (this.watcher) {
+      this.camera.updateMatrixWorld();
+      this.watcher.update(safeDt, this.playerX, this.playerZ, this.camera);
+      state.watcherMode = this.watcher.mode;
     }
 
     this._updateWorldAndLighting(safeDt, false);

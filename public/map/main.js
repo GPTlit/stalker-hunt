@@ -74,6 +74,41 @@ function boot() {
     return;
   }
 
+  // Analog joystick (pointer/touch), up = forward
+  const joy = document.getElementById("joystick");
+  const knob = document.getElementById("joystick-knob");
+  if (joy && knob) {
+    let joyId = null;
+    const radius = 50;
+    const moveKnob = (e) => {
+      const r = joy.getBoundingClientRect();
+      let dx = e.clientX - (r.left + r.width / 2);
+      let dy = e.clientY - (r.top + r.height / 2);
+      const len = Math.hypot(dx, dy);
+      if (len > radius) { dx = (dx / len) * radius; dy = (dy / len) * radius; }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      app.setAnalog(dx / radius, -dy / radius);
+    };
+    const release = (e) => {
+      if (e.pointerId !== joyId) return;
+      joyId = null;
+      joy.classList.remove("is-active");
+      knob.style.transform = "";
+      app.setAnalog(0, 0);
+    };
+    joy.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      joyId = e.pointerId;
+      joy.setPointerCapture?.(e.pointerId);
+      joy.classList.add("is-active");
+      moveKnob(e);
+    });
+    joy.addEventListener("pointermove", (e) => { if (e.pointerId === joyId) moveKnob(e); });
+    joy.addEventListener("pointerup", release);
+    joy.addEventListener("pointercancel", release);
+  }
+
   if (flags.zone) {
     dispatchAction(DEMO_ACTIONS.JUMP_ZONE, flags.zone);
   }

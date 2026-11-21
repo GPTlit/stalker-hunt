@@ -377,3 +377,19 @@ body.hud-hidden .hud-root {
     display: none;
   }
 }
+
+/* Low-opacity controls so the horror scene stays in front */
+.hud-dock, .controls-hint, .hud-status { opacity: 0.32; transition: opacity 200ms ease; }
+.hud-dock:hover, .hud-dock:focus-within, .hud-status:hover { opacity: 0.9; }
+.joystick {
+  position: fixed; left: 28px; bottom: 96px; width: 132px; height: 132px;
+  border-radius: 50%; border: 1.5px solid rgba(226, 232, 240, 0.35);
+  background: rgba(15, 20, 28, 0.18); opacity: 0.35; pointer-events: auto;
+  touch-action: none; z-index: 30; transition: opacity 150ms ease;
+}
+.joystick.is-active { opacity: 0.6; }
+.joystick-knob {
+  position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px;
+  border-radius: 50%; background: rgba(226, 232, 240, 0.45); pointer-events: none;
+}
+.hud-hidden .joystick { display: none; }
