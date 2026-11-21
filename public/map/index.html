@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mountain View Campus · Horror Map</title>
+  <meta name="description" content="Explorable 3D Mountain View campus map set for horror exploration, featuring night, dusk, and day atmospheres, flashlight, first-person walk, orbit camera, and interactive minimap.">
+  <meta property="og:title" content="Mountain View Campus · Horror Map">
+  <meta property="og:description" content="Explorable 3D Mountain View campus terrain, buildings, bridge, creek, and amphitheatre for horror exploration.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230B0E14'/%3E%3Ccircle cx='32' cy='32' r='20' fill='none' stroke='%2394A3B8' stroke-width='2.5'/%3E%3Cpath d='M32 10 L35.5 28.5 L32 25 L28.5 28.5 Z' fill='%237DD3FC'/%3E%3Ccircle cx='32' cy='32' r='3' fill='%23F8FAFC'/%3E%3C/svg%3E">
+
+  <script id="elite-ct-origin-null-shim">
+    (function() {
+      const memStore = {};
+      const safeStorage = {
+        getItem: function(k) { return Object.prototype.hasOwnProperty.call(memStore, k) ? memStore[k] : null; },
+        setItem: function(k, v) { memStore[k] = String(v); },
+        removeItem: function(k) { delete memStore[k]; },
+        clear: function() { for (const k in memStore) delete memStore[k]; }
+      };
+      const ensureSafeWebStorage = function(propName) {
+        let ok = false;
+        try {
+          const store = window[propName];
+          if (store) {
+            const testKey = "__ct_test__";
+            store.setItem(testKey, testKey);
+            store.removeItem(testKey);
+            ok = true;
+          }
+        } catch (_) {
+          ok = false;
+        }
+        if (!ok) {
+          try { Object.defineProperty(window, propName, { get: function() { return safeStorage; }, configurable: true }); } catch (_) {}
+          try {
+            if (typeof Window !== "undefined" && Window.prototype) {
+              Object.defineProperty(Window.prototype, propName, { get: function() { return safeStorage; }, configurable: true });
+            }
+          } catch (_) {}
+        }
+      };
+      ensureSafeWebStorage("localStorage");
+      ensureSafeWebStorage("sessionStorage");
+      try {
+        const origReplace = history.replaceState;
+        const origPush = history.pushState;
+        history.replaceState = function() { try { return origReplace.apply(this, arguments); } catch (_) {} };
+        history.pushState = function() { try { return origPush.apply(this, arguments); } catch (_) {} };
+      } catch (_) {}
+      try {
+        const params = new URLSearchParams(window.location.search || "");
+        if (params.get("hud") === "0" || params.get("clean") === "1") {
+          document.documentElement.classList.add("hud-hidden");
+        }
+        if (window.__virtualClock) {
+          document.documentElement.classList.add("is-virtual-clock");
+        }
+      } catch (_) {}
+    })();
+  </script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.js",
+        "three/": "./vendor/"
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="./inline_fonts.css">
+  <link rel="stylesheet" href="./styles.css">
+  <style id="campus-preloader-critical">
+    .campus-preloader {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background:
+        radial-gradient(880px 520px at 50% 25%, rgba(125, 211, 252, 0.08), transparent 65%),
+        linear-gradient(180deg, #0b0e14 0%, #06080c 100%);
+      opacity: 1;
+      transition: opacity 280ms ease-out;
+      pointer-events: auto;
+      user-select: none;
+    }
+    .campus-preloader.is-fading-out {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .preloader-card {
+      width: min(410px, calc(100vw - 48px));
+      padding: 28px 28px 24px;
+      border-radius: 10px;
+      background: #0d1118;
+      border: 1px solid rgba(226, 232, 240, 0.14);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      color: #F1F5F9;
+      font-family: "Google Sans Flex", system-ui, -apple-system, sans-serif;
+    }
+    .preloader-mark-wrap {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(226, 232, 240, 0.12);
+    }
+    .preloader-compass-svg {
+      width: 28px;
+      height: 28px;
+    }
+    .preloader-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.25;
+      color: #F8FAFC;
+    }
+    .preloader-subtitle {
+      margin: 4px 0 22px;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #94A3B8;
+    }
+    .preloader-bar-track {
+      width: 100%;
+      height: 4px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.09);
+      overflow: hidden;
+    }
+    .preloader-bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 4px;
+      background: #7DD3FC;
+      transition: width 140ms ease-out;
+    }
+    .preloader-meta-row {
+      width: 100%;
+      margin-top: 10px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .preloader-stage {
+      font-size: 12px;
+      font-weight: 500;
+      color: #94A3B8;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .preloader-pct {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: #E2E8F0;
+      min-width: 4ch;
+      text-align: right;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="campus-preloader" class="campus-preloader" role="status" aria-live="polite" aria-label="Loading Mountain View Campus Map">
+    <div class="preloader-card">
+      <div class="preloader-mark-wrap" aria-hidden="true">
+        <svg class="preloader-compass-svg" viewBox="0 0 32 32" fill="none">
+          <circle cx="16" cy="16" r="12" stroke="#94A3B8" stroke-width="1.5" stroke-opacity="0.7"/>
+          <path d="M16 5L19 14L16 12.2L13 14Z" fill="#7DD3FC"/>
+          <path d="M16 27L13 18L16 19.8L19 18Z" fill="#475569"/>
+          <circle cx="16" cy="16" r="1.8" fill="#F8FAFC"/>
+        </svg>
+      </div>
+      <h1 class="preloader-title">Mountain View Campus</h1>
+      <p class="preloader-subtitle">Nightfall Territory Map</p>
+      <div class="preloader-bar-track" aria-hidden="true">
+        <div class="preloader-bar-fill" id="preloader-bar-fill"></div>
+      </div>
+      <div class="preloader-meta-row">
+        <span class="preloader-stage" id="preloader-stage">Initializing terrain…</span>
+        <span class="preloader-pct tabular-nums" id="preloader-pct">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="app" class="app-root">
+    <main class="stage-container" id="stage-container">
+      <canvas id="stage-canvas" class="stage-canvas" aria-label="3D Mountain View Campus Map"></canvas>
+    </main>
+
+    <div id="hud-root" class="hud-root">
+      <!-- Top-Left Minimal Location & Atmosphere Chip -->
+      <div class="hud-status" id="hud-status" aria-label="Current location and lighting">
+        <span class="hud-zone" id="hud-zone">South Canopy Forecourt</span>
+        <span class="hud-sep" aria-hidden="true">·</span>
+        <span class="hud-coords tabular-nums" id="hud-coords">0, 118</span>
+        <span class="hud-sep" aria-hidden="true">·</span>
+        <span class="hud-atmo" id="hud-atmo">Night</span>
+      </div>
+
+      <!-- Top-Right Collapsible Minimap Drawer -->
+      <aside class="minimap-panel" id="minimap-panel" aria-label="Campus Minimap">
+        <div class="minimap-header">
+          <span class="minimap-title">Campus Survey Map</span>
+          <button type="button" class="minimap-close" id="btn-close-map" title="Close Map (M)" aria-label="Close Map">×</button>
+        </div>
+        <div class="minimap-canvas-wrap">
+          <canvas id="minimap-canvas" width="220" height="220" title="Click anywhere on map to teleport"></canvas>
+        </div>
+        <div class="zone-teleport-grid" id="zone-teleport-grid" role="group" aria-label="Quick teleport zones">
+          <button type="button" class="zone-btn is-active" data-zone="canopy">Canopy</button>
+          <button type="button" class="zone-btn" data-zone="west_lawn">West Lawn</button>
+          <button type="button" class="zone-btn" data-zone="courtyard">Courtyard</button>
+          <button type="button" class="zone-btn" data-zone="waterfront">Waterfront</button>
+          <button type="button" class="zone-btn" data-zone="shoreline">Shoreline</button>
+        </div>
+      </aside>
+
+      <!-- Subtle Walk Mode Reticle -->
+      <div class="walk-reticle" id="walk-reticle" aria-hidden="true"></div>
+
+      <!-- Unobtrusive Controls Hint Above Dock -->
+      <div class="controls-hint" id="controls-hint">
+        Click viewport to lock mouse · <kbd>WASD</kbd> Move · <kbd>Shift</kbd> Sprint · <kbd>F</kbd> Flashlight · <kbd>Tab</kbd> Orbit · <kbd>M</kbd> Map
+      </div>
+
+      <!-- Bottom-Center Unified Explorer Dock -->
+      <nav class="hud-dock" id="hud-dock" aria-label="Map explorer controls">
+        <div class="dock-group" role="group" aria-label="Camera mode">
+          <button type="button" class="dock-btn is-active" id="btn-cam-walk" data-cam-mode="walk" title="First-person walk (Tab)">Walk</button>
+          <button type="button" class="dock-btn" id="btn-cam-orbit" data-cam-mode="orbit" title="Free orbit camera (Tab)">Orbit</button>
+        </div>
+        <div class="dock-divider" aria-hidden="true"></div>
+        <div class="dock-group" role="group" aria-label="Atmosphere preset">
+          <button type="button" class="dock-btn is-active" id="btn-atmo-night" data-atmo="night" title="Night atmosphere (1)">Night</button>
+          <button type="button" class="dock-btn" id="btn-atmo-dusk" data-atmo="dusk" title="Dusk atmosphere (2)">Dusk</button>
+          <button type="button" class="dock-btn" id="btn-atmo-day" data-atmo="day" title="Daylight atmosphere (3)">Day</button>
+        </div>
+        <div class="dock-divider" aria-hidden="true"></div>
+        <div class="dock-group" role="group" aria-label="Map utilities">
+          <button type="button" class="dock-btn is-active" id="btn-flashlight" title="Toggle Flashlight (F)">Light <kbd>F</kbd></button>
+          <button type="button" class="dock-btn" id="btn-map" title="Toggle Minimap (M)">Map <kbd>M</kbd></button>
+          <button type="button" class="dock-btn" id="btn-reset" title="Reset Spawn (R)">Reset <kbd>R</kbd></button>
+          <button type="button" class="dock-btn" id="btn-hide-hud" title="Hide HUD (H)">Hide <kbd>H</kbd></button>
+        </div>
+      </nav>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

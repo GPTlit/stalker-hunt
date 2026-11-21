@@ -28,3 +28,5 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+- The 3D map is a standalone static three.js app in public/map, embedded full-screen by the / route via iframe; it keeps its original module/importmap setup that Vite bundling would break.
